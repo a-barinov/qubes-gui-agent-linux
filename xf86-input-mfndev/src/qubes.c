@@ -101,6 +101,11 @@
 #include "xdriver-shm-cmd.h"
 #include "qubes.h"
 
+#ifdef XI2
+#include <xorg/input.h>
+uint32_t _xi2_touch_x, _xi2_touch_y;
+#endif
+
 #include "../../xf86-qubes-common/include/xf86-qubes-common.h"
 
 #if GET_ABI_MAJOR(ABI_XINPUT_VERSION) >= 12
@@ -594,6 +599,10 @@ static void process_request(int fd, InputInfoPtr pInfo)
     QubesDevicePtr pQubes = pInfo->private;
     int ret;
     struct xdriver_cmd cmd;
+#ifdef XI2
+    ValuatorMask *mask;
+    mask = valuator_mask_new(3);
+#endif
 
 
     ret = read(fd, &cmd, sizeof(cmd));
@@ -634,6 +643,46 @@ static void process_request(int fd, InputInfoPtr pInfo)
     case 'K':
         xf86PostKeyboardEvent(pInfo->dev, cmd.arg1, cmd.arg2);
         break;
+#ifdef XI2
+    case 'C':
+        xf86Msg(X_ERROR, "Touch coordinates received\n");
+        // Need to receive touch coordinates first, then touch itself ('T')
+        _xi2_touch_x = cmd.arg1;
+        _xi2_touch_y = cmd.arg2;
+        break;
+    case 'T':
+        xf86Msg(X_ERROR, "Touch event fired\n");
+        // Touch coordinates ('C') should have been received already
+         /**
+             Post a touch event with optional valuators.  If this is the first touch in
+             the sequence, at least x & y valuators must be provided. The driver is
+             responsible for maintaining the correct event sequence (TouchBegin, TouchUpdate,
+             TouchEnd). Submitting an update or end event for a unregistered touchid will
+             result in errors.
+             Touch IDs may be reused by the driver but only after a TouchEnd has been
+             submitted for that touch ID.
+               @param dev The device to post the event for
+               @param touchid The touchid of the current touch event. Must be an
+                              existing ID for TouchUpdate or TouchEnd events
+               @param type One of XI_TouchBegin, XI_TouchUpdate, XI_TouchEnd
+               @param flags Flags for this event
+               @param The valuator mask with all valuators set for this event.
+             void xf86PostTouchEvent(DeviceIntPtr dev, uint32_t touchid, uint16_t type, uint32_t flags, const ValuatorMask *mask)
+
+        **/
+        // arg1 = TouchID
+        // arg2 = XI_TouchBegin / Update / End
+        // flags =0?
+        // valuatormask with x and y set for the event
+        valuator_mask_zero(mask);
+        if (cmd.arg2 != XI_TouchEnd) {
+            valuator_mask_set_double(mask, 0, _xi2_touch_x); // 0
+            valuator_mask_set_double(mask, 1, _xi2_touch_y); // 1
+            //valuator_mask_set_double(mask, 2, 1);              // 2
+        }
+        xf86PostTouchEvent(pInfo->dev, cmd.arg1, cmd.arg2, 0, mask);
+        break;
+#endif
     default:
         xf86Msg(X_INFO, "randdev: unknown command %u\n", cmd.type);
     }

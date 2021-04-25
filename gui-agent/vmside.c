@@ -52,6 +52,21 @@
 #include "encoding.h"
 #include <libvchan.h>
 
+#define XI2
+#ifdef XI2
+#include <X11/extensions/XInput2.h>
+#include <libevdev/libevdev.h>
+#include <libevdev/libevdev-uinput.h>
+#include <evemu.h>
+
+struct evemu_device {
+	unsigned int version;
+	struct libevdev *evdev;
+	struct libevdev_uinput *uidev;
+	int pbytes, mbytes[EV_CNT];
+};
+#endif
+
 #define SOCKET_ADDRESS  "/var/run/xf86-qubes-socket"
 
 /* Supported protocol version */
@@ -1662,6 +1677,24 @@ static void handle_motion(Ghandles * g, XID winid)
     feed_xdriver(g, 'M', attr.x + key.x, attr.y + key.y);
 }
 
+#ifdef XI2
+void handle_touch(Ghandles * g, XID winid)
+{
+    struct msg_touch key;
+    struct genlist *l = list_lookup(windows_list, winid);
+
+    read_data(g->vchan, (char *) &key, sizeof(key));
+
+    if (key.eventtype == XI_TouchBegin && l && l->data && ((struct window_data*)l->data)->is_docked) {
+        /* get position of embeder, not icon itself*/
+        winid = ((struct window_data*)l->data)->embeder;
+        XRaiseWindow(g->display, winid);
+    }
+    feed_xdriver(g, 'C', key.x, key.y);
+    feed_xdriver(g, 'T', key.touchid, key.eventtype);
+}
+#endif
+
 // ensure that LeaveNotify is delivered to the window - if pointer is still
 // above this window, place stub window between pointer and the window
 static void handle_crossing(Ghandles * g, XID winid)
@@ -2043,6 +2076,11 @@ static void handle_message(Ghandles * g)
         case MSG_MOTION:
             handle_motion(g, hdr.window);
             break;
+#ifdef XI2
+        case MSG_TOUCH:
+            handle_touch(g, hdr.window);
+            break;
+#endif
         case MSG_CLOSE:
             handle_close(g, hdr.window);
             break;
